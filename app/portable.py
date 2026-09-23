@@ -104,7 +104,9 @@ html = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="theme-color" content="#6a0dad">
     <title>13ft Ladder</title>
+    <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" type="image/png">
     <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&display=swap" rel="stylesheet" async>
     <style>
@@ -440,6 +442,13 @@ html = """
     </div>
 
     <script>
+        // Register service worker for WebAPK installation
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js')
+                .then(reg => console.log('Service Worker registered'))
+                .catch(err => console.log('Service Worker registration failed'));
+        }
+
         const toggleSwitch = document.getElementById('dark-mode-toggle');
         const currentTheme = localStorage.getItem('theme') || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 
@@ -950,6 +959,35 @@ def fetch_worker(job_id, url, strings):
             jobs[job_id]['step'] = 'error'
 
 
+@app.route("/manifest.json")
+def serve_manifest():
+    return flask.send_from_directory(".", "manifest.json")
+
+
+@app.route("/sw.js")
+def serve_sw():
+    return flask.send_from_directory(".", "sw.js")
+
+
+@app.route("/icon-192.png")
+@app.route("/icon-512.png")
+def serve_icon():
+    # Serve static icon files from `app/icons`.
+    filename = "icon-512x512.png" if "512" in request.path else "icon-192x192.png"
+    try:
+        return flask.send_from_directory("icons", filename)
+    except Exception:
+        return "Not found", 404
+
+
+@app.route("/icons/<path:filename>")
+def serve_icons_dir(filename):
+    try:
+        return flask.send_from_directory("icons", filename)
+    except Exception:
+        return "Not found", 404
+
+
 @app.route("/favicon.ico")
 def favicon():
     logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logo.png")
@@ -1015,8 +1053,17 @@ def status_stream():
 
 @app.route("/article", methods=["POST"])
 def show_article():
-    link = flask.request.form["link"]
     strings = load_strings()
+    # Support both the plain form ('link') and the PWA share_target
+    # (url/title/text) posting to this same route.
+    form = flask.request.form
+    link = form.get("link") or form.get("url")
+    if not link:
+        text = form.get("text")
+        match = re.search(r"https?://\S+", text) if text else None
+        link = match.group(0) if match else None
+    if not link:
+        return strings["invalid_url"], 400
     try:
         return bypass_paywall(link, strings)
     except requests.exceptions.Timeout:
